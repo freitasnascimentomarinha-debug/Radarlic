@@ -205,3 +205,56 @@ def analisar(arquivos: list[tuple[str, bytes]], contexto: str = "", esforco: str
     resultado = json.loads(texto)
     resultado["_uso"] = {"entrada": msg.usage.input_tokens, "saida": msg.usage.output_tokens}
     return resultado
+
+
+SISTEMA_PETICAO = """Você é advogado(a) especialista em licitações (Lei 14.133/2021) que redige peças para
+empresas licitantes. Escreva em português formal, objetivo e respeitoso, no padrão usado perante
+agentes de contratação e pregoeiros. Estruture: I – DOS FATOS; II – DO DIREITO (com artigos da Lei
+14.133/2021, LC 123/2006 e, quando pertinente, entendimento consolidado do TCU, sem inventar número de
+acórdão); III – DO PEDIDO. Cite literalmente os itens do edital questionados. Não invente fatos que não
+estejam no material fornecido. Não use markdown: devolva texto puro com parágrafos separados por linha em branco."""
+
+
+def redigir_peticao(tipo: str, analise: dict, pontos: list[str], perfil: dict, edital: str,
+                    observacoes: str = "") -> str:
+    """tipo: 'Pedido de esclarecimento' ou 'Impugnação ao edital' (art. 164 da Lei 14.133/2021)."""
+    import anthropic
+    client = _cliente()
+    contexto = json.dumps({k: analise.get(k) for k in (
+        "resumo_objeto", "orgao", "modalidade_e_criterio", "data_sessao_publica", "prazo_entrega",
+        "qualificacao_tecnica", "qualificacao_economico_financeira", "amostra_ou_prova_conceito",
+        "clausulas_possivelmente_restritivas", "pontos_de_atencao")}, ensure_ascii=False)
+    pedido = (f"Redija um(a) {tipo} referente ao edital {edital}, em nome da empresa "
+              f"{perfil.get('empresa') or '[EMPRESA]'}, CNPJ {perfil.get('cnpj') or '[CNPJ]'}.\n\n"
+              f"Pontos a abordar:\n- " + "\n- ".join(pontos) +
+              (f"\n\nObservações da empresa: {observacoes}" if observacoes else "") +
+              f"\n\nResumo estruturado do edital (extraído por análise anterior):\n{contexto}")
+    try:
+        with client.beta.messages.stream(
+            model=MODELO, max_tokens=16000, system=SISTEMA_PETICAO,
+            messages=[{"role": "user", "content": pedido}],
+            thinking={"type": "adaptive"}, output_config={"effort": "medium"},
+            betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+        ) as stream:
+            msg = stream.get_final_message()
+    except anthropic.AuthenticationError as e:
+        raise RuntimeError("Chave da API Anthropic inválida.") from e
+    except anthropic.RateLimitError as e:
+        raise RuntimeError("Limite de uso da API atingido; tente em instantes.") from e
+    except anthropic.APIStatusError as e:
+        raise RuntimeError(f"Erro da API ({e.status_code}): {e.message}") from e
+    except anthropic.APIConnectionError as e:
+        raise RuntimeError("Sem conexão com a API da Anthropic.") from e
+    if msg.stop_reason == "refusal":
+        raise RuntimeError("O modelo recusou a redação.")
+    return "".join(b.text for b in msg.content if b.type == "text").strip()
+
+
+def ia_configurada() -> bool:
+    import os
+    try:
+        if st.secrets.get("ANTHROPIC_API_KEY"):
+            return True
+    except Exception:
+        pass
+    return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))

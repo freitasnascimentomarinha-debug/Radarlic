@@ -1,0 +1,8 @@
+{
+  "palavras": ["papel", "toner", "material de expediente"],
+  "ufs": ["RJ"],
+  "uf_sede": "RJ",
+  "me_epp": true,
+  "valor_min": 0,
+  "valor_max": 500000
+}

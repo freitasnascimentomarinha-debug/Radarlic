@@ -3,14 +3,14 @@ from datetime import date
 import plotly.express as px
 import streamlit as st
 
-from core import compras
+from core import compras, theme
+from core.grid import grid
 from core.http import APIError
 from core.ui import brl, aviso_api
 
-st.title("🗓️ Compras futuras — Plano de Contratações Anual (PCA)")
-st.caption("Cada órgão publica o que pretende comprar no ano seguinte (art. 12, VII, da Lei 14.133/2021). "
-           "É o melhor sinal de **editais que ainda vão abrir**: dá tempo de prospectar, cadastrar o "
-           "produto e negociar com fornecedores antes do edital sair.")
+theme.hero("🗓️", "Compras futuras — PCA",
+           "Cada órgão publica o que pretende comprar no ano seguinte (art. 12, VII, da Lei 14.133/2021). "
+           "É o sinal mais antecipado de <b>editais que ainda vão abrir</b>: dá tempo de prospectar e negociar com fornecedores.")
 
 c1, c2, c3 = st.columns([1, 1, 1])
 classe = c1.number_input("Classe de material (4 dígitos)", 1000, 9999,
@@ -38,10 +38,12 @@ if filtro:
     df = df[df.apply(lambda r: f in f"{r.get('descricaoItemCatalogo', '')} {r.get('nomeUasg', '')} "
                                    f"{r.get('descricaoObjetoDfd', '')}".lower(), axis=1)]
 
-k = st.columns(3)
-k[0].metric("Demandas planejadas", len(df))
-k[1].metric("Valor planejado", brl(df.valorTotalItem.sum(), 0))
-k[2].metric("Órgãos (UASG)", df.codigoUasg.nunique())
+theme.kpis([
+    {"rotulo": "Demandas planejadas", "valor": len(df), "formato": "int", "icone": "📋", "cor": theme.INDIGO},
+    {"rotulo": "Valor planejado", "valor": df.valorTotalItem.sum(), "formato": "brl", "icone": "💰", "cor": theme.VERDE},
+    {"rotulo": "Órgãos (UASG)", "valor": df.codigoUasg.nunique(), "formato": "int", "icone": "🏛", "cor": theme.CIANO},
+    {"rotulo": "Itens CATMAT distintos", "valor": df.codigoItemCatalogo.nunique(), "formato": "int", "icone": "📦", "cor": theme.AMBAR},
+])
 
 c1, c2 = st.columns(2)
 top_org = df.groupby("nomeUasg").valorTotalItem.sum().nlargest(12).reset_index()
@@ -54,13 +56,16 @@ c2.plotly_chart(px.bar(crono, x="dataPrevistaFormalizacaoDemanda", y="valorTotal
                        title="Quando pretendem comprar",
                        labels={"dataPrevistaFormalizacaoDemanda": "", "valorTotalItem": "R$"}), use_container_width=True)
 
-cols = [c for c in ["dataPrevistaFormalizacaoDemanda", "nomeUasg", "codigoItemCatalogo", "descricaoItemCatalogo",
-                    "quantidadeItem", "siglaUnidadeFornecimento", "valorUnitarioItem", "valorTotalItem",
-                    "descricaoObjetoDfd", "nivelPrioridadeDfd"] if c in df]
-st.dataframe(df[cols].sort_values("dataPrevistaFormalizacaoDemanda"), hide_index=True, use_container_width=True,
-             column_config={"valorUnitarioItem": st.column_config.NumberColumn("vlr unit.", format="R$ %.2f"),
-                            "valorTotalItem": st.column_config.NumberColumn("vlr total", format="R$ %.2f"),
-                            "dataPrevistaFormalizacaoDemanda": st.column_config.DateColumn("previsão", format="MM/YYYY"),
-                            "descricaoItemCatalogo": st.column_config.TextColumn("item", width="large")})
+grid(df.sort_values("dataPrevistaFormalizacaoDemanda"), "pca", {
+    "dataPrevistaFormalizacaoDemanda": {"tipo": "data", "titulo": "Previsão", "largura": 115, "fixa": True},
+    "nomeUasg": {"titulo": "Órgão (UASG)", "largura": 250},
+    "codigoItemCatalogo": {"titulo": "CATMAT", "largura": 100},
+    "descricaoItemCatalogo": {"tipo": "longo", "titulo": "Item", "min": 300},
+    "quantidadeItem": {"tipo": "num", "titulo": "Qtd.", "largura": 95},
+    "siglaUnidadeFornecimento": {"titulo": "Un.", "largura": 75},
+    "valorUnitarioItem": {"tipo": "brl", "titulo": "Unit.", "largura": 120},
+    "valorTotalItem": {"tipo": "brl", "titulo": "Total", "largura": 130},
+    "descricaoObjetoDfd": {"tipo": "longo", "titulo": "Demanda", "min": 220, "flex": 1},
+}, selecao=False)
 st.download_button("⬇️ Exportar (CSV)", df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
                    f"pca_{classe}_{ano}.csv")

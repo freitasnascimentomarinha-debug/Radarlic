@@ -1,13 +1,16 @@
 import pandas as pd
 import streamlit as st
 
-from core import pncp, storage, ia
+from core import pncp, storage, ia, theme
+from core.grid import grid
 from core.http import APIError
 from core.ui import brl, id_de_link, aviso_api
 
 cart = storage.carregar()
 
-st.title("📄 Edital + análise com IA")
+theme.hero("📄", "Edital + análise com IA",
+           "Itens, documentos e — com um clique — a leitura completa do edital pela IA: exigências de habilitação, "
+           "prazos, riscos, cláusulas restritivas e checklist.")
 
 entrada = st.text_input("Número de controle PNCP ou link do edital",
                         value=st.session_state.get("edital_sel", ""),
@@ -18,10 +21,14 @@ aba_pncp, aba_upload = st.tabs(["🔗 Edital do PNCP", "⬆️ Enviar PDF própr
 
 
 def mostrar_analise(a: dict):
-    nota = a.get("nota_viabilidade", 0)
-    c = st.columns([1, 3])
-    c[0].metric("Viabilidade", f"{nota}/10")
-    c[1].info(a.get("justificativa_nota", ""))
+    nota = a.get("nota_viabilidade", 0) or 0
+    cor = theme.VERDE if nota >= 7 else theme.AMBAR if nota >= 4 else theme.ROSA
+    st.markdown(f"<div class='rl-card' style='display:flex;gap:18px;align-items:center'>"
+                f"<div style='width:74px;height:74px;border-radius:50%;flex:none;display:grid;place-items:center;"
+                f"background:conic-gradient({cor} {nota * 36}deg,#eef2f7 0);'><div style='width:58px;height:58px;"
+                f"border-radius:50%;background:#fff;display:grid;place-items:center;font-weight:800;font-size:1.2rem;"
+                f"color:{cor}'>{nota}/10</div></div><div><div class='t'>Viabilidade de participação</div>"
+                f"<div class='s'>{a.get('justificativa_nota', '')}</div></div></div>", unsafe_allow_html=True)
     st.markdown(f"**Objeto:** {a.get('resumo_objeto', '')}")
     campos = [("Órgão", "orgao"), ("Modalidade / critério", "modalidade_e_criterio"),
               ("Sessão pública", "data_sessao_publica"), ("Prazo de propostas", "prazo_propostas"),
@@ -32,8 +39,9 @@ def mostrar_analise(a: dict):
               ("Amostra / prova de conceito", "amostra_ou_prova_conceito"),
               ("Benefício ME/EPP", "beneficio_me_epp"),
               ("Consórcio / subcontratação", "permite_consorcio_subcontratacao")]
-    st.dataframe(pd.DataFrame([(r, a.get(k, "")) for r, k in campos], columns=["Campo", "Edital"]),
-                 hide_index=True, use_container_width=True)
+    grid(pd.DataFrame([(r, a.get(k, "")) for r, k in campos], columns=["Campo", "Edital"]), f"campos_{id(a)}",
+         {"Campo": {"largura": 230, "fixa": True}, "Edital": {"tipo": "longo", "min": 400}},
+         selecao=False, busca=False, pagina=50)
 
     t = st.tabs(["✅ Habilitação", "⚠️ Atenção", "📦 Itens", "🗒️ Checklist", "{} JSON"])
     with t[0]:
@@ -56,9 +64,14 @@ def mostrar_analise(a: dict):
         for x in a.get("penalidades", []):
             st.markdown(f"- {x}")
     with t[2]:
-        st.dataframe(pd.DataFrame(a.get("itens_principais", [])), hide_index=True, use_container_width=True)
+        grid(pd.DataFrame(a.get("itens_principais", [])), f"ia_itens_{id(a)}",
+             {"item": {"largura": 80}, "descricao": {"tipo": "longo"}, "quantidade": {"largura": 110},
+              "unidade": {"largura": 110}, "valor_unitario_estimado": {"titulo": "valor unit.", "largura": 140}},
+             selecao=False)
     with t[3]:
-        st.dataframe(pd.DataFrame(a.get("checklist", [])), hide_index=True, use_container_width=True)
+        grid(pd.DataFrame(a.get("checklist", [])), f"ia_check_{id(a)}",
+             {"tarefa": {"tipo": "longo", "titulo": "Tarefa"}, "prazo": {"titulo": "Prazo", "largura": 220}},
+             selecao=False, busca=False)
     with t[4]:
         st.json(a)
     st.caption("⚖️ Análise automatizada para triagem. Confirme sempre no texto do edital antes de decidir ou impugnar.")
@@ -79,13 +92,21 @@ with aba_pncp:
         if cab:
             st.subheader(cab.get("objetoCompra", "")[:300])
             u = cab.get("unidadeOrgao", {}) or {}
-            k = st.columns(4)
-            k[0].metric("Valor estimado", brl(cab.get("valorTotalEstimado")))
-            k[1].metric("Modalidade", cab.get("modalidadeNome", "—"))
             fim = pd.to_datetime(cab.get("dataEncerramentoProposta"), errors="coerce")
-            k[2].metric("Propostas até", fim.strftime("%d/%m %H:%M") if pd.notna(fim) else "—")
-            k[3].metric("Itens", len(its))
-            st.caption(f"Situação: {cab.get('situacaoCompraNome', '—')}")
+            theme.kpis([
+                {"rotulo": "Valor estimado", "valor": cab.get("valorTotalEstimado"), "formato": "brl", "icone": "💰", "cor": theme.VERDE},
+                {"rotulo": "Modalidade", "valor": cab.get("modalidadeNome", "—"), "formato": "txt", "icone": "⚖", "cor": theme.INDIGO,
+                 "sub": cab.get("situacaoCompraNome", "")},
+                {"rotulo": "Propostas até", "valor": fim.strftime("%d/%m %H:%M") if pd.notna(fim) else "—", "formato": "txt",
+                 "icone": "⏱", "cor": theme.ROSA},
+                {"rotulo": "Itens", "valor": len(its), "formato": "int", "icone": "📦", "cor": theme.CIANO},
+            ])
+            if st.button("⭐ Salvar no funil"):
+                storage.salvar_edital(pid, {**(st.session_state.get("edital_meta") or {}), "objeto": cab.get("objetoCompra"),
+                                            "orgao": (cab.get("orgaoEntidade") or {}).get("razaoSocial"), "uf": u.get("ufSigla"),
+                                            "fim_propostas": cab.get("dataEncerramentoProposta"),
+                                            "valor_estimado": cab.get("valorTotalEstimado")})
+                st.toast("Salvo no funil.", icon="⭐")
             st.caption(f"{(cab.get('orgaoEntidade') or {}).get('razaoSocial', '')} · {u.get('nomeUnidade', '')} — "
                        f"{u.get('municipioNome', '')}/{u.get('ufSigla', '')} · SRP: {'sim' if cab.get('srp') else 'não'} · "
                        f"Amparo: {(cab.get('amparoLegal') or {}).get('nome', '—')}")
@@ -96,15 +117,22 @@ with aba_pncp:
         if its.empty:
             st.caption("Sem itens publicados.")
         else:
-            ev = st.dataframe(its, hide_index=True, use_container_width=True, on_select="rerun",
-                              selection_mode="single-row", key="itens_ed",
-                              column_config={
-                                  "valorUnitarioEstimado": st.column_config.NumberColumn("Vlr unit. estimado", format="R$ %.2f"),
-                                  "valorTotal": st.column_config.NumberColumn("Vlr total", format="R$ %.2f"),
-                                  "catalogoCodigoItem": "CATMAT/CATSER",
-                                  "descricao": st.column_config.TextColumn("Descrição", width="large")})
-            if ev.selection.rows:
-                linha = its.iloc[ev.selection.rows[0]]
+            st.caption("Clique num item para ver o preço histórico ou levá-lo à calculadora.")
+            linha, _ = grid(its, f"itens_{pid}", {
+                "numeroItem": {"titulo": "Item", "largura": 75, "fixa": True},
+                "descricao": {"tipo": "longo", "titulo": "Descrição", "min": 340},
+                "catalogoCodigoItem": {"titulo": "CATMAT/CATSER", "largura": 130},
+                "quantidade": {"tipo": "num", "titulo": "Qtd.", "largura": 95},
+                "unidadeMedida": {"titulo": "Unidade", "largura": 110},
+                "valorUnitarioEstimado": {"tipo": "brl", "titulo": "Unit. estimado", "largura": 140},
+                "valorTotal": {"tipo": "brl", "titulo": "Total", "largura": 140},
+                "tipoBeneficioNome": {"tipo": "badge", "titulo": "Benefício", "largura": 230,
+                                      "cores": {"Participação exclusiva para ME/EPP": theme.VERDE, "Sem benefício": theme.CINZA}},
+                "criterioJulgamentoNome": {"titulo": "Critério", "largura": 130},
+                "situacaoCompraItemNome": {"tipo": "badge", "titulo": "Situação", "largura": 130,
+                                           "cores": {"Em andamento": theme.INDIGO, "Homologado": theme.VERDE}},
+            })
+            if linha is not None:
                 c1, c2 = st.columns(2)
                 if linha.get("catalogoCodigoItem") and c1.button("💰 Ver preço histórico deste item", use_container_width=True):
                     st.session_state.catmat_sel = str(linha["catalogoCodigoItem"])
@@ -119,9 +147,12 @@ with aba_pncp:
         if not arqs:
             st.caption("Nenhum arquivo publicado no PNCP. Use a aba **Enviar PDF próprio**.")
         else:
-            docs = pd.DataFrame(arqs)[["titulo", "tipoDocumentoNome", "dataPublicacaoPncp", "url"]]
-            st.dataframe(docs, hide_index=True, use_container_width=True,
-                         column_config={"url": st.column_config.LinkColumn("Baixar", display_text="baixar ↓")})
+            grid(pd.DataFrame(arqs), f"arqs_{pid}", {
+                "titulo": {"tipo": "longo", "titulo": "Arquivo"},
+                "tipoDocumentoNome": {"tipo": "badge", "titulo": "Tipo", "largura": 190,
+                                      "cores": {"Edital": theme.INDIGO, "Termo de Referência": theme.VIOLETA}},
+                "dataPublicacaoPncp": {"tipo": "datahora", "titulo": "Publicado", "largura": 150},
+                "url": {"tipo": "link", "titulo": "Baixar"}}, selecao=False, busca=False)
             padrao = [a["titulo"] for a in arqs if a.get("tipoDocumentoId") in (2, 4)] or [arqs[0]["titulo"]]
             escolhidos = st.multiselect("Documentos para a IA analisar", [a["titulo"] for a in arqs], default=padrao)
 
@@ -130,7 +161,10 @@ with aba_pncp:
             col1, col2 = st.columns([1, 2])
             esforco = col2.select_slider("Profundidade", ["low", "medium", "high"], value="medium",
                                          help="Maior profundidade = análise mais cuidadosa, porém mais lenta e cara.")
-            if col1.button("🤖 Analisar com IA", type="primary", use_container_width=True, disabled=not escolhidos):
+            if not ia.ia_configurada():
+                st.warning("Para a análise com IA, configure `ANTHROPIC_API_KEY` em Secrets (veja o README).")
+            if col1.button("🤖 Analisar com IA", type="primary", use_container_width=True,
+                           disabled=not escolhidos or not ia.ia_configurada()):
                 try:
                     with st.status("Lendo o edital…", expanded=True) as stt:
                         arquivos = []
@@ -145,10 +179,8 @@ with aba_pncp:
                         stt.update(label="Análise concluída", state="complete")
                     cart["analises"][pid] = res
                     meta = st.session_state.get("edital_meta") or {}
-                    cart["salvos"].setdefault(pid, {**{k: str(v) for k, v in meta.items()},
-                                                    "pncp_id": pid,
-                                                    "objeto": (cab or {}).get("objetoCompra", "")})
-                    storage.salvar()
+                    storage.salvar_edital(pid, {**meta, "objeto": meta.get("objeto") or (cab or {}).get("objetoCompra", ""),
+                                                "fim_propostas": meta.get("fim_propostas") or (cab or {}).get("dataEncerramentoProposta")})
                 except (RuntimeError, APIError) as e:
                     st.error(str(e))
             if pid in cart["analises"]:
@@ -165,8 +197,7 @@ with aba_upload:
             with st.spinner("Analisando com Claude (1–3 min)…"):
                 res = ia.analisar([(f.name, f.getvalue()) for f in up], nome)
             cart["analises"][nome] = res
-            cart["salvos"].setdefault(nome, {"pncp_id": nome, "objeto": res.get("resumo_objeto", "")})
-            storage.salvar()
+            storage.salvar_edital(nome, {"objeto": res.get("resumo_objeto", ""), "orgao": res.get("orgao", "")})
             st.session_state.upload_res = nome
         except RuntimeError as e:
             st.error(str(e))

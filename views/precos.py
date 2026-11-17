@@ -4,12 +4,14 @@ import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 
-from core import compras, pncp
+from core import compras, pncp, theme
+from core.grid import grid
 from core.http import APIError
 from core.ui import brl, pct, aviso_api
 
-st.title("💰 Preços históricos")
-st.caption("Preços **homologados** em compras públicas (Compras.gov.br / PNCP), por código CATMAT (material) ou CATSER (serviço).")
+theme.hero("💰", "Preços históricos",
+           "Preços <b>homologados</b> em compras públicas por código CATMAT (material) ou CATSER (serviço): "
+           "média, mediana, mínimo e máximo médios, por UF, marca e fornecedor.")
 
 with st.expander("🔍 Não sei o código CATMAT — descobrir pelo nome do produto",
                  expanded=not st.session_state.get("catmat_sel")):
@@ -25,10 +27,13 @@ with st.expander("🔍 Não sei o código CATMAT — descobrir pelo nome do prod
         if desc.empty:
             st.warning("Nenhum código encontrado. Tente termos mais genéricos (ex.: 'papel sulfite').")
         else:
-            ev = st.dataframe(desc, hide_index=True, use_container_width=True, on_select="rerun",
-                              selection_mode="single-row", key="desc_tab")
-            if ev.selection.rows:
-                st.session_state.catmat_sel = desc.iloc[ev.selection.rows[0]]["codigo"]
+            st.caption("Clique no código certo:")
+            esc, _ = grid(desc, "desc_tab", {"codigo": {"titulo": "Código", "largura": 110, "fixa": True},
+                                             "ocorrencias": {"tipo": "num", "titulo": "Ocorrências", "largura": 120},
+                                             "descricao": {"tipo": "longo", "titulo": "Descrição"},
+                                             "unidade": {"titulo": "Unidade", "largura": 120}}, busca=False)
+            if esc is not None and esc["codigo"] != st.session_state.get("catmat_sel"):
+                st.session_state.catmat_sel = esc["codigo"]
                 st.rerun()
 
 c1, c2, c3, c4 = st.columns([1.2, 1, 1.4, 1])
@@ -69,19 +74,28 @@ if len(unidades) > 1:
 
 stats, mensal = compras.estatisticas(df, outl)
 
-k = st.columns(4)
-k[0].metric("Preço médio", brl(stats["media"]))
-k[1].metric("Mediana", brl(stats["mediana"]))
-k[2].metric("Mínimo médio (mensal)", brl(stats["media_minimos"]),
-            help="Média dos menores preços de cada mês — referência de preço agressivo/vencedor.")
-k[3].metric("Máximo médio (mensal)", brl(stats["media_maximos"]),
-            help="Média dos maiores preços de cada mês.")
-k = st.columns(4)
-k[0].metric("Menor preço", brl(stats["minimo"]))
-k[1].metric("Maior preço", brl(stats["maximo"]))
-k[2].metric("Compras analisadas", stats["n"], help=f"{stats['descartados']} descartadas como discrepantes")
-k[3].metric("Dispersão (CV)", pct(100 * stats["cv"]) if stats["cv"] else "—",
-            help="Coeficiente de variação. Acima de 25% indica mercado heterogêneo (IN 65/2021 recomenda análise crítica).")
+_p = df["precoUnitario"].dropna()
+if outl and len(_p) >= 5:  # mesma regra de descarte das estatísticas
+    _q1, _q3 = _p.quantile([.25, .75]); _p = _p[(_p >= _q1 - 1.5 * (_q3 - _q1)) & (_p <= _q3 + 1.5 * (_q3 - _q1))]
+st.session_state.precos_hist = {"codigo": codigo.strip(), "precos": _p.tolist(),
+                                "unidade": df["unidade_fornecimento"].iloc[0] if len(df) else ""}
+theme.kpis([
+    {"rotulo": "Preço médio", "valor": stats["media"], "formato": "brl", "icone": "📊", "cor": theme.INDIGO},
+    {"rotulo": "Mediana", "valor": stats["mediana"], "formato": "brl", "icone": "🎯", "cor": theme.VIOLETA,
+     "sub": f"P25 {brl(stats['p25'])} · P75 {brl(stats['p75'])}"},
+    {"rotulo": "Mínimo médio", "valor": stats["media_minimos"], "formato": "brl", "icone": "⬇", "cor": theme.VERDE,
+     "sub": "média dos menores preços/mês"},
+    {"rotulo": "Máximo médio", "valor": stats["media_maximos"], "formato": "brl", "icone": "⬆", "cor": theme.ROSA,
+     "sub": "média dos maiores preços/mês"},
+])
+theme.kpis([
+    {"rotulo": "Menor preço", "valor": stats["minimo"], "formato": "brl", "icone": "🥇", "cor": theme.CIANO},
+    {"rotulo": "Maior preço", "valor": stats["maximo"], "formato": "brl", "icone": "🔺", "cor": theme.AMBAR},
+    {"rotulo": "Compras analisadas", "valor": stats["n"], "formato": "int", "icone": "🧾", "cor": theme.INDIGO,
+     "sub": f"{stats['descartados']} discrepantes descartadas"},
+    {"rotulo": "Dispersão (CV)", "valor": 100 * stats["cv"] if stats["cv"] else None, "formato": "pct", "icone": "〰",
+     "cor": theme.CINZA, "sub": "> 25% = mercado heterogêneo"},
+])
 
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=df.dataCompra, y=df.precoUnitario, mode="markers", name="Compras",
@@ -94,35 +108,46 @@ st.plotly_chart(fig, use_container_width=True)
 c1, c2 = st.columns(2)
 por_uf = df.groupby("estado").precoUnitario.agg(["count", "median", "min", "max"]).reset_index() \
     .rename(columns={"estado": "UF", "count": "compras", "median": "mediana", "min": "mínimo", "max": "máximo"})
-c1.markdown("**Por UF**")
-c1.dataframe(por_uf.sort_values("compras", ascending=False), hide_index=True, use_container_width=True,
-             column_config={c: st.column_config.NumberColumn(format="R$ %.2f") for c in ["mediana", "mínimo", "máximo"]})
+with c1:
+    st.markdown("**Por UF**")
+    grid(por_uf.sort_values("compras", ascending=False), "por_uf",
+         {"UF": {"largura": 70}, "compras": {"tipo": "num"}, "mediana": "brl", "mínimo": "brl", "máximo": "brl"},
+         selecao=False, busca=False, pagina=10)
 if "nomeFornecedor" in df:
     venc = df.groupby(["niFornecedor", "nomeFornecedor"]).agg(
         vitorias=("precoUnitario", "count"), preco_medio=("precoUnitario", "mean"),
         ufs=("estado", lambda s: ", ".join(sorted(set(s.dropna()))))).reset_index() \
         .sort_values("vitorias", ascending=False)
-    c2.markdown("**Quem mais vende este item**")
-    ev = c2.dataframe(venc.head(30), hide_index=True, use_container_width=True, on_select="rerun",
-                      selection_mode="single-row", key="venc_tab",
-                      column_config={"preco_medio": st.column_config.NumberColumn("preço médio", format="R$ %.2f")})
-    if ev.selection.rows:
-        st.session_state.cnpj_sel = venc.iloc[ev.selection.rows[0]]["niFornecedor"]
-        st.switch_page("views/concorrentes.py")
+    with c2:
+        st.markdown("**Quem mais vende este item** — clique para o raio-X")
+        vsel, _ = grid(venc.head(50), "venc_tab", {
+            "nomeFornecedor": {"titulo": "Fornecedor", "tipo": "longo", "min": 200},
+            "vitorias": {"tipo": "num", "titulo": "Vitórias", "largura": 100},
+            "preco_medio": {"tipo": "brl", "titulo": "Preço médio", "largura": 130},
+            "ufs": {"titulo": "UFs", "largura": 120}}, busca=False, pagina=10)
+        if vsel is not None:
+            st.session_state.cnpj_sel = vsel["niFornecedor"]
+            st.switch_page("views/concorrentes.py")
 
 b1, b2 = st.columns(2)
-if b1.button("🧮 Usar a mediana na calculadora de margem", use_container_width=True):
+if b1.button("🧮 Calcular margem e chance de vencer com estes preços", use_container_width=True):
     st.session_state.preco_ref = float(stats["mediana"])
     st.switch_page("views/calculadora.py")
 b2.download_button("⬇️ Exportar compras (CSV) — serve de memória da pesquisa de preços",
                    df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
                    f"precos_{codigo}.csv", "text/csv", use_container_width=True)
 
-with st.expander("Ver compras individuais"):
-    cols = [c for c in ["dataCompra", "precoUnitario", "quantidade", "unidade_fornecimento", "marca",
-                        "nomeFornecedor", "nomeUasg", "estado", "modalidade", "descricaoItem"] if c in df]
-    st.dataframe(df[cols].sort_values("dataCompra", ascending=False), hide_index=True, use_container_width=True,
-                 column_config={"precoUnitario": st.column_config.NumberColumn("preço", format="R$ %.2f")})
+st.markdown("#### 🧾 Compras individuais")
+grid(df.sort_values("dataCompra", ascending=False), "compras_ind", {
+    "dataCompra": {"tipo": "data", "titulo": "Data", "largura": 110, "fixa": True},
+    "precoUnitario": {"tipo": "brl", "titulo": "Preço unit.", "largura": 130},
+    "quantidade": {"tipo": "num", "titulo": "Qtd.", "largura": 100},
+    "unidade_fornecimento": {"titulo": "Unidade", "largura": 120},
+    "marca": {"titulo": "Marca", "largura": 140},
+    "nomeFornecedor": {"titulo": "Fornecedor", "largura": 220},
+    "nomeUasg": {"titulo": "Órgão comprador", "largura": 240},
+    "estado": {"titulo": "UF", "largura": 70},
+    "descricaoItem": {"tipo": "longo", "titulo": "Descrição", "min": 260}}, selecao=False)
 
 if "marca" in df and df.marca.notna().any():
     top = df.marca.str.upper().str.strip().value_counts().head(12).index

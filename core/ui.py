@@ -40,28 +40,32 @@ def aviso_api(e: Exception):
         f"tente de novo em alguns instantes.\n\nDetalhe técnico: `{e}`", icon="📡")
 
 
+CORES_FASE = {"Aberto": "#059669", "A abrir": "#4f46e5", "Encerrado": "#94a3b8"}
+CORES_MOD = {"Pregão - Eletrônico": "#4f46e5", "Dispensa": "#0891b2", "Concorrência - Eletrônica": "#7c3aed",
+             "Pregão - Presencial": "#6366f1", "Concorrência - Presencial": "#8b5cf6", "Inexigibilidade": "#64748b",
+             "Credenciamento": "#d97706", "Leilão - Eletrônico": "#e11d48"}
+
+
 def tabela_editais(df: pd.DataFrame, key: str, com_score: bool = True):
-    """Mostra editais com seleção de linha. Retorna a linha selecionada (Series) ou None."""
+    """Editais em AG Grid com seleção de linha. Retorna a linha selecionada (Series) ou None."""
+    from .grid import grid
     if df.empty:
         st.info("Nenhum edital encontrado com esses filtros.")
         return None
-    cols = (["score"] if com_score and "score" in df else []) + [
-        "fase", "fim_propostas", "objeto", "orgao", "municipio", "uf", "modalidade",
-        "valor_estimado", "motivos", "link_pncp"]
-    cols = [c for c in cols if c in df.columns]
-    ev = st.dataframe(
-        df[cols], key=key, hide_index=True, use_container_width=True,
-        on_select="rerun", selection_mode="single-row",
-        column_config={
-            "score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%d"),
-            "fase": "Fase",
-            "fim_propostas": st.column_config.DatetimeColumn("Propostas até", format="DD/MM/YY HH:mm"),
-            "objeto": st.column_config.TextColumn("Objeto", width="large"),
-            "orgao": "Órgão", "municipio": "Município", "uf": "UF", "modalidade": "Modalidade",
-            "valor_estimado": st.column_config.NumberColumn("Valor estimado", format="R$ %.2f"),
-            "motivos": "Por que pontuou",
-            "link_pncp": st.column_config.LinkColumn("PNCP", display_text="abrir ↗"),
-        },
-    )
-    rows = ev.selection.rows if ev and ev.selection else []
-    return df.iloc[rows[0]] if rows else None
+    cols = {}
+    if com_score and "score" in df:
+        cols["score"] = {"tipo": "score", "titulo": "Score", "fixa": True, "largura": 140}
+    cols.update({
+        "fase": {"tipo": "badge", "titulo": "Fase", "cores": CORES_FASE, "largura": 110},
+        "fim_propostas": {"tipo": "prazo", "titulo": "Propostas até"},
+        "objeto": {"tipo": "longo", "titulo": "Objeto", "min": 320},
+        "orgao": {"titulo": "Órgão", "largura": 220},
+        "municipio": {"titulo": "Município", "largura": 140},
+        "uf": {"titulo": "UF", "largura": 70},
+        "modalidade": {"tipo": "badge", "titulo": "Modalidade", "cores": CORES_MOD, "largura": 190},
+        "valor_estimado": {"tipo": "brl", "titulo": "Valor estimado", "largura": 150},
+        "motivos": {"tipo": "longo", "titulo": "Por que pontuou", "min": 220, "flex": 1},
+        "link_pncp": {"tipo": "link", "titulo": "PNCP"},
+    })
+    linha, _ = grid(df, key, cols)
+    return linha

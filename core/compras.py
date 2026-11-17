@@ -162,3 +162,36 @@ def pca_por_classe(codigo_classe: int, ano: int, servico: bool = False, max_pagi
         df[c] = pd.to_numeric(df.get(c), errors="coerce")
     df["dataPrevistaFormalizacaoDemanda"] = pd.to_datetime(df.get("dataPrevistaFormalizacaoDemanda"), errors="coerce")
     return df
+
+
+# ---------------------------------------------------------------- atas de registro de preços (carona)
+@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
+def atas_por_item(codigo: str, inicio: date, fim: date, max_paginas: int = 6) -> pd.DataFrame:
+    """Atas de registro de preço que contêm o item (vigência iniciada entre `inicio` e `fim`).
+    Servem para: preço de referência atual, saldo para adesão (art. 86, Lei 14.133) e,
+    pelas que estão vencendo, prever a próxima licitação do órgão."""
+    rows = _paginar("/modulo-arp/2_consultarARPItem", {
+        "codigoItem": codigo,
+        "dataVigenciaInicialMin": inicio.isoformat(),
+        "dataVigenciaInicialMax": fim.isoformat(),
+    }, max_paginas=max_paginas)
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    df = df[~df.get("itemExcluido", False).fillna(False).astype(bool)]
+    for c in ("valorUnitario", "valorTotal", "quantidadeHomologadaItem", "maximoAdesao", "quantidadeEmpenhada"):
+        df[c] = pd.to_numeric(df.get(c), errors="coerce")
+    for c in ("dataVigenciaInicial", "dataVigenciaFinal", "dataAssinatura"):
+        df[c] = pd.to_datetime(df.get(c), errors="coerce")
+    df["dias_para_vencer"] = (df["dataVigenciaFinal"] - pd.Timestamp.today().normalize()).dt.days
+    df["link_pncp"] = df["numeroControlePncpCompra"].map(_link_pncp)
+    return df
+
+
+def _link_pncp(pid):
+    try:
+        cnpj, _, resto = str(pid).split("-", 2)
+        seq, ano = resto.split("/")
+        return f"https://pncp.gov.br/app/editais/{cnpj}/{ano}/{int(seq)}"
+    except Exception:
+        return None

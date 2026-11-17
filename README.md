@@ -46,12 +46,27 @@ lance e gestão de documentos.
 4. **Cláusulas possivelmente restritivas** na análise da IA → base para esclarecimento/impugnação.
 5. **Raio-X do concorrente**: porte, capital, sócios, CNAE (Receita) + faturamento com governo.
 
-### Próximos passos sugeridos (roadmap)
-- **Alertas automáticos** (e-mail/Telegram) para novos editais com score alto — exige um agendador
-  (GitHub Actions ou Supabase), o Streamlit Cloud não roda tarefas em segundo plano.
-- **Controle de validade de certidões** (FGTS, CNDT, Receita, estadual, municipal, falência).
-- **Atas vigentes para adesão (carona)** e **contratos vencendo** (`modulo-arp`, `modulo-contratos`).
-- **Banco persistente** (Supabase/Google Sheets) no lugar do JSON, para uso em equipe.
+### Versão 2 — gestão completa e visual moderno
+| Tela | O que faz |
+|---|---|
+| 🏠 **Painel** | Página inicial: disputas dos próximos 7 dias (linha do tempo), funil, taxa de vitória, valor ganho, certidões a renovar e atalhos. |
+| 📊 **Funil de propostas** | Cada edital salvo passa por Triagem → Cotando → Proposta enviada → Em disputa → Ganho/Perdido. Edição direto na tabela (status, valor da proposta, responsável, anotações), gráfico de conversão e valor por status. |
+| 📅 **Agenda de disputas** | Calendário (FullCalendar, JavaScript) com sessões e vencimento de certidões; exporta `.ics` para Google Agenda/Outlook com lembrete 1 dia antes. |
+| 🛡️ **Certidões e habilitação** | Validade de CND federal, FGTS, CNDT, estadual, municipal, falência, balanço, SICAF e CEIS/CNEP, com semáforo e link para emitir. |
+| 📝 **Proposta e petições** | Gera a **proposta comercial em Word** com os itens do edital (marca, modelo, preço) e os dados da empresa; redige **pedido de esclarecimento ou impugnação** com IA a partir da análise do edital (art. 164). |
+| 🤝 **Atas e carona (ARP)** | Atas vigentes do item: preço registrado, detentor, limite para adesões (art. 86) e atas **vencendo em 90 dias** (o órgão vai licitar de novo). |
+| 🎲 **Chance de vencer** | Na calculadora: probabilidade empírica de vencer a cada preço (a partir dos preços homologados) e **preço ótimo** que maximiza chance × lucro, respeitando uma chance mínima. |
+| 🔔 **Alertas automáticos** | `scripts/alerta.py` + GitHub Actions: todo dia útil às 07:17 busca editais novos com o seu perfil e envia os de score alto por **Telegram** e/ou **e-mail**. |
+
+**Tabelas:** todas usam AG Grid (JavaScript) com formato brasileiro (R$, datas), selos coloridos,
+barra de score, contagem regressiva do prazo, busca, filtros por coluna, paginação, colunas fixas,
+exportação e edição em linha. **Cartões de indicadores** animados e **tema** próprio (fonte Inter,
+barra lateral escura, gráficos padronizados).
+
+### Próximos passos sugeridos
+- **Banco persistente** (Supabase ou Google Sheets) no lugar do JSON, para uso em equipe.
+- **Contratos vencendo** por órgão (`modulo-contratos/1.2_consultarContratos_FimVigencia`).
+- **Cotação com fornecedores**: enviar pedido de cotação por e-mail a partir dos itens do edital.
 
 ---
 
@@ -86,7 +101,19 @@ streamlit run app.py
 A chave da Anthropic só é necessária para a **análise de edital com IA**
 (crie em https://console.anthropic.com). O restante funciona sem chave.
 
-## 4. Publicar no Streamlit Community Cloud
+## 4. Alertas automáticos (Telegram / e-mail)
+
+1. Edite `alertas/perfil.json` (palavras-chave, UFs, faixa de valor, ME/EPP) — ou copie o bloco
+   `perfil` do JSON exportado em **Meu perfil → Exportar carteira**.
+2. **Telegram:** fale com `@BotFather`, crie um bot e copie o token; mande uma mensagem ao bot e
+   pegue seu `chat_id` em `https://api.telegram.org/bot<TOKEN>/getUpdates`.
+3. No GitHub: **Settings → Secrets and variables → Actions** → crie `TELEGRAM_TOKEN` e
+   `TELEGRAM_CHAT_ID` (e/ou `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_TO`).
+   Opcional: variável `SCORE_MIN` (padrão 60).
+4. O workflow `.github/workflows/alertas.yml` roda nos dias úteis às 07:17 (Brasília). Para testar,
+   vá em **Actions → Alertas RadarLic → Run workflow**. O workflow só roda a partir do branch padrão.
+
+## 5. Publicar no Streamlit Community Cloud
 
 1. Suba este repositório no GitHub (pode ser privado).
 2. Em https://share.streamlit.io → **Create app** → escolha o repositório, branch e `app.py`.
@@ -100,7 +127,7 @@ A chave da Anthropic só é necessária para a **análise de edital com IA**
 
 ---
 
-## 5. Estrutura
+## 6. Estrutura
 
 ```
 app.py                 navegação, senha opcional
@@ -111,11 +138,15 @@ core/cnpj.py           cadastro de CNPJ
 core/scoring.py        score de oportunidade
 core/pricing.py        formação de preço (markup divisor)
 core/ia.py             análise de edital com Claude (saída JSON estruturada)
-core/storage.py        perfil + carteira (JSON)
+core/storage.py        perfil, funil, certidões (JSON)
+core/theme.py          tema, cabeçalhos, cartões animados (JS), template Plotly
+core/grid.py           tabelas AG Grid (JS): formatos, selos, prazos, edição
+core/docs.py           proposta e petições (.docx), agenda (.ics)
+scripts/alerta.py      alerta diário (GitHub Actions)
 views/*.py             uma tela por arquivo
 ```
 
-## 6. Base legal citada no sistema
-Lei 14.133/2021 (arts. 9º, 12, 23, 41, 59, 67, 75, 96–98, 164) · LC 123/2006 (arts. 44 e 48) ·
+## 7. Base legal citada no sistema
+Lei 14.133/2021 (arts. 9º, 12, 23, 41, 59, 62–70, 75, 86, 87, 96–98, 164) · LC 123/2006 (arts. 44 e 48) ·
 IN SEGES 65/2021 (pesquisa de preços) · IN SEGES 73/2022 · Decreto 11.462/2023.
 A análise de IA serve para **triagem**: confirme sempre no texto do edital.

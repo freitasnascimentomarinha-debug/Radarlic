@@ -1,11 +1,13 @@
 import pandas as pd
 import streamlit as st
 
-from core import storage
+from core import storage, theme
+from core.grid import grid
 from core.ui import brl
 
 cart = storage.carregar()
-st.title("⚖️ Comparar editais")
+theme.hero("⚖️", "Comparar editais",
+           "Lado a lado: valor, prazos, entrega, garantias e exigências de habilitação dos editais analisados pela IA.")
 
 analises = cart["analises"]
 salvos = cart["salvos"]
@@ -47,7 +49,8 @@ for pid in sel:
     col = {"Viabilidade (IA)": f"{a['nota_viabilidade']}/10" if a else "não analisado",
            "Score do radar": s.get("score", "—"),
            "UF": s.get("uf", "—"),
-           "Propostas até": str(s.get("fim_propostas", "—"))[:16]}
+           "Propostas até": (lambda d: d.strftime("%d/%m/%Y %H:%M") if pd.notna(d) else "—")(
+               pd.to_datetime(s.get("fim_propostas"), errors="coerce"))}
     for r, k in CAMPOS:
         col[r] = a.get(k) or (brl(float(s["valor_estimado"])) if k == "valor_estimado" and s.get("valor_estimado") not in (None, "", "nan") else s.get("objeto", "—") if k == "resumo_objeto" else "—")
     for r, k in LISTAS:
@@ -58,8 +61,12 @@ for pid in sel:
     tab[pid] = col
 
 df = pd.DataFrame(tab)
-st.dataframe(df, use_container_width=True, height=900,
-             column_config={c: st.column_config.TextColumn(c, width="large") for c in df.columns})
+tabela = df.reset_index().rename(columns={"index": "Campo"})
+nomes = {f"e{i}": f"{i + 1}. {c}" for i, c in enumerate(df.columns)}
+tabela.columns = ["Campo"] + list(nomes)
+grid(tabela, "comparador", {"Campo": {"largura": 210, "fixa": True},
+                            **{c: {"tipo": "wrap", "titulo": t} for c, t in nomes.items()}},
+     selecao=False, busca=False, pagina=100, altura=900)
 st.download_button("⬇️ Exportar comparação (CSV)", df.to_csv(sep=";").encode("utf-8-sig"), "comparacao.csv")
 
 sem = [p for p in sel if p not in analises]

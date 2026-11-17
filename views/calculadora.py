@@ -1,13 +1,17 @@
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from core import theme
+from core.grid import grid
+
 from core.pricing import Entrada, REGIMES, preco_venda, margem_no_preco, decompor, limite_inexequivel
 from core.ui import brl, pct
 
-st.title("🧮 Calculadora de margem e preço de lance")
-st.caption("Forma o preço pelo *markup divisor*: todos os percentuais incidem sobre o **preço de venda**, "
-           "não sobre o custo — o erro mais comum de quem começa em licitação.")
+theme.hero("🧮", "Calculadora de margem e chance de vencer",
+           "Preço pelo <b>markup divisor</b> (percentuais sobre o preço de venda, não sobre o custo), lance mínimo, "
+           "ponto de equilíbrio e — com o histórico de preços — a <b>probabilidade de vencer</b> e o <b>preço ótimo</b>.")
 
 col_e, col_r = st.columns([1, 1.3])
 with col_e:
@@ -41,14 +45,19 @@ with col_r:
     if p_alvo is None:
         st.error("Despesas + margem ≥ 100% do preço. Reduza percentuais.")
         st.stop()
-    k = st.columns(3)
-    k[0].metric("Preço proposto", brl(p_alvo), help=f"Margem de {pct(margem)}")
-    k[1].metric("Lance mínimo", brl(p_min), help=f"Abaixo disso, margem < {pct(margem_min)}")
-    k[2].metric("Ponto de equilíbrio", brl(p_zero), help="Preço com lucro zero")
-    k = st.columns(3)
-    k[0].metric("Faturamento", brl(p_alvo * qtd, 0))
-    k[1].metric("Lucro líquido", brl((p_alvo - p_zero) * qtd if p_zero else None, 0))
-    k[2].metric("Despesas sobre o preço", pct(e.despesas_pct))
+    theme.kpis([
+        {"rotulo": "Preço proposto", "valor": p_alvo, "formato": "brl", "icone": "🎯", "cor": theme.INDIGO,
+         "sub": f"margem {pct(margem)}"},
+        {"rotulo": "Lance mínimo", "valor": p_min, "formato": "brl", "icone": "⬇", "cor": theme.AMBAR,
+         "sub": f"margem {pct(margem_min)}"},
+        {"rotulo": "Equilíbrio", "valor": p_zero, "formato": "brl", "icone": "⚖", "cor": theme.ROSA, "sub": "lucro zero"},
+    ], altura=112)
+    theme.kpis([
+        {"rotulo": "Faturamento", "valor": p_alvo * qtd, "formato": "brl", "icone": "💰", "cor": theme.CIANO},
+        {"rotulo": "Lucro líquido", "valor": (p_alvo - p_zero) * qtd if p_zero else None, "formato": "brl",
+         "icone": "📈", "cor": theme.VERDE},
+        {"rotulo": "Despesas s/ preço", "valor": e.despesas_pct, "formato": "pct", "icone": "🧾", "cor": theme.CINZA},
+    ], altura=112)
 
     ref = st.number_input("Preço de referência do edital / histórico (R$/un.)", 0.0,
                           value=float(st.session_state.get("preco_ref", 0.0)), format="%.2f",
@@ -77,9 +86,57 @@ with col_r:
         if p:
             linhas.append({"margem %": m, "preço unit.": p, "total": p * qtd,
                            "desconto s/ ref. %": (100 * (1 - p / ref)) if ref else None})
-    st.dataframe(pd.DataFrame(linhas).drop_duplicates("margem %"), hide_index=True, use_container_width=True,
-                 column_config={"preço unit.": st.column_config.NumberColumn(format="R$ %.4f"),
-                                "total": st.column_config.NumberColumn(format="R$ %.2f"),
-                                "desconto s/ ref. %": st.column_config.NumberColumn(format="%.1f%%")})
+    tl = pd.DataFrame(linhas).drop_duplicates("margem %").rename(
+        columns={"margem %": "margem", "preço unit.": "preco", "desconto s/ ref. %": "desconto"})
+    grid(tl, "lances", {"margem": {"tipo": "pct", "titulo": "Margem"}, "preco": {"tipo": "brl", "titulo": "Preço unit."},
+                        "total": {"tipo": "brl", "titulo": "Total"}, "desconto": {"tipo": "pct", "titulo": "Desconto s/ ref."}},
+         selecao=False, busca=False)
     st.caption("Dica: em pregão eletrônico os lances costumam ser em reais com até 2–4 casas decimais, "
                "conforme o edital. Leve esta tabela para a sessão de disputa.")
+
+
+# ------------------------------------------------------------------ chance de vencer
+st.markdown("### 🎲 Chance de vencer e preço ótimo")
+hist = st.session_state.get("precos_hist")
+if not hist or len(hist.get("precos", [])) < 5:
+    st.info("Abra **Preços históricos**, pesquise o item (mesma unidade de fornecimento) e clique em "
+            "**Calcular margem e chance de vencer** para trazer os preços vencedores para cá.")
+else:
+    P = np.sort(np.array(hist["precos"], dtype=float))
+    st.caption(f"Base: {len(P)} preços homologados do item {hist['codigo']} (unidade {hist.get('unidade', '')}, sem discrepantes). Chance de vencer a um preço p = fração das "
+               "compras passadas em que o preço vencedor foi maior ou igual a p (você teria ganho). É uma estimativa "
+               "empírica: confira se a unidade de fornecimento é a mesma do seu custo.")
+    ch_min = st.slider("Chance mínima aceitável para o preço ótimo (%)", 5, 90, 30, 5,
+                       help="Evita que poucos preços altos fora da curva puxem o 'ótimo' para um valor improvável.") / 100
+    chance = lambda p: float((P >= p).mean()) if p is not None else 0.0  # noqa: E731
+    grade = np.linspace(max(0.01, min(P.min(), p_zero) * 0.9), max(P.max(), p_alvo) * 1.05, 400)
+    ch = np.array([chance(x) for x in grade])
+    lucro_esp = np.where(grade > p_zero, (grade - p_zero) * qtd * ch, 0)
+    validos = np.where(ch >= ch_min, lucro_esp, 0)
+    p_otimo = float(grade[validos.argmax()]) if validos.max() > 0 else None
+    theme.kpis([
+        {"rotulo": "Chance no preço proposto", "valor": 100 * chance(p_alvo), "formato": "pct", "icone": "🎯", "cor": theme.INDIGO},
+        {"rotulo": "Chance no lance mínimo", "valor": 100 * chance(p_min), "formato": "pct", "icone": "⬇", "cor": theme.AMBAR},
+        {"rotulo": "Preço ótimo", "valor": p_otimo, "formato": "brl", "icone": "⭐", "cor": theme.VERDE,
+         "sub": f"chance {pct(100 * chance(p_otimo))} · margem {pct(margem_no_preco(e, p_otimo))}" if p_otimo else "custo acima do mercado"},
+        {"rotulo": "Lucro esperado no ótimo", "valor": float(validos.max()) if p_otimo else None, "formato": "brl",
+         "icone": "📈", "cor": theme.CIANO, "sub": "chance × lucro"},
+    ])
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=grade, y=100 * ch, name="Chance de vencer (%)", line=dict(width=3, color=theme.INDIGO),
+                             fill="tozeroy", fillcolor="rgba(79,70,229,.08)"))
+    fig.add_trace(go.Scatter(x=grade, y=lucro_esp, name="Lucro esperado (R$)", yaxis="y2",
+                             line=dict(width=2, dash="dot", color=theme.VERDE)))
+    for x, nome, cor, simb in [(p_alvo, "Proposto", theme.INDIGO, "circle"), (p_min, "Lance mínimo", theme.AMBAR, "diamond"),
+                               (p_zero, "Equilíbrio", theme.ROSA, "x"), (p_otimo, "Ótimo", theme.VERDE, "star")]:
+        if x:
+            fig.add_vline(x=x, line=dict(color=cor, dash="dash", width=1))
+            fig.add_trace(go.Scatter(x=[x], y=[100 * chance(x)], mode="markers", name=f"{nome}: {brl(x)} ({100 * chance(x):.0f}%)",
+                                     marker=dict(size=13, color=cor, symbol=simb, line=dict(color="#fff", width=1.5))))
+    fig.update_layout(height=470, xaxis_title="Preço unitário (R$)", legend=dict(orientation="h", y=-0.22),
+                      yaxis=dict(title="Chance (%)", range=[0, 105]),
+                      yaxis2=dict(title="Lucro esperado (R$)", overlaying="y", side="right", showgrid=False))
+    st.plotly_chart(fig, use_container_width=True)
+    if p_otimo and p_otimo < p_min:
+        st.warning("O preço ótimo fica abaixo do seu lance mínimo: o mercado está apertado para o seu custo. "
+                   "Reveja fornecedor, frete ou regime tributário.")

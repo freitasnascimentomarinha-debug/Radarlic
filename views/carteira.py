@@ -1,16 +1,30 @@
 import pandas as pd
 import streamlit as st
 
-from core import pncp, storage
+from core import pncp, storage, theme
+from core.grid import grid
 
 cart = storage.carregar()
 p = cart["perfil"]
 
-st.title("🏢 Meu perfil e carteira")
-st.caption("O perfil alimenta o score do Radar e os rankings de concorrentes.")
+theme.hero("🏢", "Meu perfil e carteira",
+           "Os dados da empresa entram na proposta e nas petições; as palavras-chave, UFs e faixa de valor alimentam o "
+           "score do Radar.")
 
 with st.form("perfil"):
-    p["empresa"] = st.text_input("Nome da empresa", p.get("empresa", ""))
+    st.markdown("##### 🏢 Dados da empresa (usados nos documentos)")
+    c1, c2 = st.columns([2, 1])
+    p["empresa"] = c1.text_input("Razão social", p.get("empresa", ""))
+    p["cnpj"] = c2.text_input("CNPJ", p.get("cnpj", ""))
+    p["endereco"] = st.text_input("Endereço completo (termine com a cidade/UF)", p.get("endereco", ""))
+    c1, c2, c3 = st.columns(3)
+    p["telefone"] = c1.text_input("Telefone", p.get("telefone", ""))
+    p["email"] = c2.text_input("E-mail comercial", p.get("email", ""))
+    p["banco"] = c3.text_input("Dados bancários", p.get("banco", ""), placeholder="Banco 001 / Ag. 0000 / CC 00000-0")
+    c1, c2 = st.columns(2)
+    p["responsavel"] = c1.text_input("Representante legal", p.get("responsavel", ""))
+    p["cargo"] = c2.text_input("Cargo", p.get("cargo", ""))
+    st.markdown("##### 🎯 O que você vende e onde")
     palavras = st.text_area("Palavras-chave do que você vende (uma por linha)", "\n".join(p.get("palavras", [])),
                             help="Termos que aparecem no objeto dos editais: 'papel sulfite', 'toner', 'luva nitrílica'…")
     c1, c2 = st.columns(2)
@@ -34,9 +48,13 @@ with st.form("perfil"):
 st.subheader("⭐ Editais salvos")
 if cart["salvos"]:
     df = pd.DataFrame(cart["salvos"].values())
-    cols = [c for c in ["pncp_id", "objeto", "orgao", "uf", "fim_propostas", "valor_estimado", "score"] if c in df]
-    df["analisado"] = df["pncp_id"].isin(cart["analises"])
-    st.dataframe(df[cols + ["analisado"]], hide_index=True, use_container_width=True)
+    df["analisado"] = df["pncp_id"].map(lambda x: "🤖 sim" if x in cart["analises"] else "—")
+    grid(df, "salvos", {"status": {"tipo": "badge", "titulo": "Status", "cores": storage.CORES_FUNIL, "largura": 150},
+                        "fim_propostas": {"tipo": "prazo", "titulo": "Propostas até"},
+                        "objeto": {"tipo": "longo", "titulo": "Objeto"}, "orgao": {"titulo": "Órgão", "largura": 200},
+                        "uf": {"titulo": "UF", "largura": 70}, "valor_estimado": {"tipo": "brl", "titulo": "Estimado"},
+                        "analisado": {"titulo": "IA", "largura": 90}, "pncp_id": {"titulo": "PNCP", "largura": 230}},
+         selecao=False)
     rem = st.multiselect("Remover", list(cart["salvos"]))
     if rem and st.button("Remover selecionados"):
         for r in rem:

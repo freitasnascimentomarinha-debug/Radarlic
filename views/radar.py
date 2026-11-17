@@ -1,15 +1,16 @@
 import pandas as pd
 import streamlit as st
 
-from core import pncp, scoring, storage
+from core import pncp, scoring, storage, theme
 from core.http import APIError
 from core.ui import brl, tabela_editais, aviso_api
 
 cart = storage.carregar()
 perfil = cart["perfil"]
 
-st.title("🎯 Radar de editais")
-st.caption("Pregões, dispensas e concorrências **abertos** ou **a abrir** no PNCP, ranqueados pelo seu perfil.")
+theme.hero("🎯", "Radar de editais",
+           "Pregões, dispensas e concorrências <b>abertos</b> ou <b>a abrir</b> no PNCP, ranqueados pelo seu perfil. "
+           "Clique numa linha para analisar, salvar no funil ou abrir no sistema de disputa.")
 
 with st.form("filtros"):
     c1, c2 = st.columns([2, 1])
@@ -60,18 +61,23 @@ if df.empty:
     st.info("Nenhum resultado. Ajuste os filtros ou as palavras do seu perfil (menu **Meu perfil**).")
     st.stop()
 
-k = st.columns(5)
-k[0].metric("Editais encontrados", f"{len(df):,}".replace(",", "."),
-            help=f"Total no PNCP para a busca: {st.session_state.get('radar_total', 0):,}")
-k[1].metric("Abertos", int((df.fase == "Aberto").sum()))
-k[2].metric("A abrir", int((df.fase == "A abrir").sum()))
-k[3].metric("Dispensas", int((df.modalidade_id == 8).sum()))
-k[4].metric("Valor estimado somado", brl(df.valor_estimado.sum(), 0))
+theme.kpis([
+    {"rotulo": "Editais", "valor": len(df), "formato": "int", "icone": "📑", "cor": theme.INDIGO,
+     "sub": f"de {st.session_state.get('radar_total', 0):,} no PNCP".replace(",", ".")},
+    {"rotulo": "Score ≥ 70", "valor": int((df.score >= 70).sum()), "formato": "int", "icone": "⭐", "cor": theme.VERDE,
+     "sub": "melhores oportunidades"},
+    {"rotulo": "Encerram em 48h", "valor": int(((df.dias_para_fim >= 0) & (df.dias_para_fim <= 2)).sum()),
+     "formato": "int", "icone": "⏱", "cor": theme.ROSA, "sub": "decida hoje"},
+    {"rotulo": "A abrir", "valor": int((df.fase == "A abrir").sum()), "formato": "int", "icone": "🗓", "cor": theme.VIOLETA,
+     "sub": "propostas ainda não abertas"},
+    {"rotulo": "Valor estimado", "valor": df.valor_estimado.sum(), "formato": "brl", "icone": "💰", "cor": theme.CIANO,
+     "sub": f"{int((df.modalidade_id == 8).sum())} dispensas"},
+])
 
 abas = st.tabs(["⭐ Melhores oportunidades", "🔨 Pregões", "⚡ Dispensas", "🗓️ A abrir", "📊 Visão geral"])
 sel = None
 with abas[0]:
-    corte = st.slider("Score mínimo", 0, 100, 50, 5)
+    corte = st.select_slider("Score mínimo", list(range(0, 101, 5)), 50)
     sel = tabela_editais(df[df.score >= corte], "t_top") if sel is None else sel
 with abas[1]:
     s = tabela_editais(df[df.modalidade_id.isin([6, 7])], "t_preg"); sel = sel if s is None else s
@@ -94,20 +100,20 @@ with abas[4]:
 
 st.divider()
 if sel is not None:
-    st.subheader(sel["titulo"] or sel["pncp_id"])
-    st.write(sel["objeto"])
-    st.caption(f"{sel['orgao']} — {sel['municipio']}/{sel['uf']} · {sel['modalidade']} · "
-               f"{brl(sel['valor_estimado'])} · score {sel.get('score', '—')}")
-    b1, b2, b3 = st.columns(3)
-    if b1.button("📄 Abrir edital e analisar", type="primary", use_container_width=True):
-        st.session_state.edital_sel = sel["pncp_id"]
-        st.session_state.edital_meta = sel.to_dict()
-        st.switch_page("views/edital.py")
-    if b2.button("⭐ Salvar na carteira", use_container_width=True):
-        cart["salvos"][sel["pncp_id"]] = {k: (str(v) if isinstance(v, pd.Timestamp) else v)
-                                          for k, v in sel.to_dict().items()}
-        storage.salvar(); st.toast("Edital salvo na carteira.")
-    b3.link_button("Ver no sistema de origem ↗", sel["link_origem"] or sel["link_pncp"], use_container_width=True)
+    with st.container(border=True):
+        st.markdown(f"#### {sel['titulo'] or sel['pncp_id']}  " + theme.badge(f"score {sel.get('score', '—')}", theme.INDIGO)
+                    + " " + theme.badge(sel["fase"], theme.VERDE), unsafe_allow_html=True)
+        st.write(sel["objeto"])
+        st.caption(f"{sel['orgao']} — {sel['municipio']}/{sel['uf']} · {sel['modalidade']} · "
+                   f"{brl(sel['valor_estimado'])} · {sel.get('motivos', '')}")
+        b1, b2, b3 = st.columns(3)
+        if b1.button("📄 Abrir edital e analisar", type="primary", use_container_width=True):
+            st.session_state.edital_sel = sel["pncp_id"]
+            st.session_state.edital_meta = sel.to_dict()
+            st.switch_page("views/edital.py")
+        if b2.button("⭐ Salvar no funil", use_container_width=True):
+            storage.salvar_edital(sel["pncp_id"], sel.to_dict()); st.toast("Edital salvo no funil (Triagem).", icon="⭐")
+        b3.link_button("Ver no sistema de origem ↗", sel["link_origem"] or sel["link_pncp"], use_container_width=True)
 else:
     st.caption("👆 Clique em uma linha para ver ações (analisar com IA, salvar, comparar).")
 
